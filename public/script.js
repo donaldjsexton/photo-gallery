@@ -26,7 +26,9 @@ function addFiles(files){
 function renderItem({ id, name, url }) {
 	const wrap = document.createElement('div');
 	wrap.className = 'item';
-	wrap.dataset.id = id;
+	if (id) wrap.dataset.id = id;
+	wrap.dataset.name = name;
+	wrap.dataset.url = url;
 	wrap.innerHTML = `
 	<img class="thumb" src="${url}" loading="lazy" alt="${escapeHtml(name)}">
 	<div class="bar">
@@ -34,17 +36,31 @@ function renderItem({ id, name, url }) {
 	<button class="del" aria-label="Remove image">Delete</button>
 	</div>
 	`;
-	wrap.querySelector('.del').addEventListener('click', () => removeItem(id));
+	wrap.querySelector('.del').addEventListener('click', () => removeItem(wrap));
 	grid.appendChild(wrap);
 }
 
-function removeItem(id) {
-	const i = items.findIndex(x => x.id === id);
-	if (i === -1) return;
-	URL.revokeObjectURL(items[i].url);
-	items.splice(i, 1);
-	const node = grid.querySelector(`.item[data-id="${id}"]`);
-	if (node) node.remove();
+function removeItem(cardEl) {
+	const name = cardEl.dataset.name;
+	const url = cardEl.dataset.url || '';
+	const isBlob = url.startsWith('blob:');
+
+	const doDelete = isBlob
+	? Promise.resolve()
+	: fetch(`/api/images?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+
+	doDelete.then(async (res) => {
+		if (!isBlob && res && !res.ok) {
+			alert('Delete failed');
+			return;
+		}
+		if (isBlob) {
+			try {URL.revokeObjectURL(url); } catch {}
+			const i = items.findIndex(x => x.name === name);
+			if (i !== -1) items.splice(i,1);
+		}
+		cardEl.remove();
+	}).catch(()=> alert('Delete failed'));
 }
 
 function escapeHtml(s) {
@@ -104,6 +120,5 @@ window.addEventListener('paste', (e) => {
 	if (files.length) addFiles(files);
 });
 
-fetch('/api/images').then(r=>r.json()).then(d=>console.log('images:', d));
 window.addEventListener('DOMContentLoaded', load);
 
