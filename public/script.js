@@ -105,4 +105,5 @@ window.addEventListener('paste', (e) => {
 });
 
 fetch('/api/images').then(r=>r.json()).then(d=>console.log('images:', d));
+window.addEventListener('DOMContentLoaded', load);
 
