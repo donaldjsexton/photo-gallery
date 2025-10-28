@@ -1,0 +1,60 @@
+name: Node (builtin) CI + Pages
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22.x] # Use built-in test runner; expand matrix if you want
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # Run tests using ONLY Node core (no npm install)
+      - name: Run unit tests
+        run: node --test --test-reporter=spec
+
+      # Optional: built-in experimental coverage (no packages)
+      - name: Run with experimental coverage
+        run: node --test --experimental-test-coverage
+
+      - name: Upload raw coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-coverage-${{ matrix.node-version }}
+          path: .coverage
+          if-no-files-found: ignore
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && needs.test.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
