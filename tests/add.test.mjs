@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { assert } from "node:assert/strict";
+import assert from "node:assert/strict";
 import { add } from "../src/add.mjs";
 
 test("adds numbers", () => {
