@@ -88,12 +88,12 @@ function isImageMagic(buf) {
     return true;
   //gif
   if (
-    (buf[0] === 0x47 &&
-      buf[1] === 0x49 &&
-      buf[2] === 0x46 &&
-      buf[3] === 0x38 &&
-      buf[4] === 0x37) ||
-    (buf[4] === 0x39 && buf[5] === 0x61)
+    buf[0] === 0x47 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x38 &&
+    (buf[4] === 0x37 || buf[4] === 0x39) &&
+    buf[5] === 0x61
   )
     return true;
   // WebP: "RIFF" .... "WEBP"
@@ -224,18 +224,11 @@ const server = http.createServer(async (req, res) => {
         const limit = 50 * 1024 * 1024; // 50 MB
         let bytes = 0;
         let aborted = false;
+
+        // NEW: header validation state
         let validated = false;
         let head = Buffer.alloc(0);
         let out = null;
-
-        req.on("data", (chunk) => {
-          bytes += chunk.length;
-          if (bytes > limit && !aborted) {
-            aborted = true;
-            out.destroy();
-            req.destroy();
-          }
-        });
 
         const cleanup = async () => {
           try {
@@ -243,13 +236,78 @@ const server = http.createServer(async (req, res) => {
           } catch {}
         };
 
-        req.pipe(out);
-
-        req.on("aborted", cleanup);
-        out.on("error", cleanup);
-
-        out.on("finish", async () => {
+        req.on("data", (chunk) => {
           if (aborted) return;
+
+          // size guard
+          bytes += chunk.length;
+          if (bytes > limit) {
+            aborted = true;
+            if (out) out.destroy();
+            req.destroy();
+            return;
+          }
+
+          // validate first ~32 bytes before writing to disk
+          if (!validated) {
+            head = Buffer.concat([head, chunk]);
+            if (head.length >= 32) {
+              if (!isImageMagic(head)) {
+                aborted = true;
+                if (out) out.destroy();
+                req.destroy();
+                return send(
+                  res,
+                  415,
+                  { "Content-Type": "application/json; charset=utf-8" },
+                  JSON.stringify({
+                    error: "unsupported media type (not an image)",
+                  }),
+                );
+              }
+              validated = true;
+              out = createWriteStream(tmp);
+              // write the validated head
+              out.write(head);
+              // write any remainder of this chunk beyond the head
+              const rest =
+                head.length < chunk.length ? chunk.subarray(head.length) : null;
+              if (rest && rest.length) out.write(rest);
+              head = null;
+            }
+            return; // wait for more data or validation to complete
+          }
+
+          // after validation: stream to disk
+          out.write(chunk);
+        });
+
+        req.on("aborted", async () => {
+          aborted = true;
+          if (out) out.destroy();
+          await cleanup();
+        });
+
+        req.on("end", async () => {
+          if (aborted) return;
+
+          // handle tiny files (<32 bytes total): validate what we have
+          if (!validated) {
+            if (!isImageMagic(head)) {
+              return send(
+                res,
+                415,
+                { "Content-Type": "application/json; charset=utf-8" },
+                JSON.stringify({
+                  error: "unsupported media type (not an image)",
+                }),
+              );
+            }
+            out = createWriteStream(tmp);
+            out.end(head);
+          } else {
+            out.end();
+          }
 
           const master = masterPath(id);
           const thumb = thumbPath(id, 640);
@@ -309,9 +367,7 @@ const server = http.createServer(async (req, res) => {
         });
 
         return; // stop fallthrough for this route
-      }
-
-      // fallback /api
+      } // fallback /api
       return send(
         res,
         404,
